@@ -18,3 +18,6 @@ desktop.ini
 # IDE / Editor Files
 .vscode/
 .idea/
+
+# YOLO Dataset Cache
+*.cache
