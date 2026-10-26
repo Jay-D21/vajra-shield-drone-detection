@@ -1,0 +1,7 @@
+names:
+- bird
+- drone
+nc: 2
+test: C:\Users\ADMIN\Downloads\Drone Detection\Drone Detection\Drone detection.v9i.yolov8\test\images
+train: C:\Users\ADMIN\Downloads\Drone Detection\Drone Detection\Drone detection.v9i.yolov8\train\images
+val: C:\Users\ADMIN\Downloads\Drone Detection\Drone Detection\Drone detection.v9i.yolov8\valid\images

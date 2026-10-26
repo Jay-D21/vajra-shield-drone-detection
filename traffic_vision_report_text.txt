@@ -1,0 +1,454 @@
+Project Report
+on
+“TrafficVision AI: Real-Time Multi-Object Tracking and Traffic Analytics using YOLOv8 + ByteTrack”
+By
+Vaibhav Gujarathi — C229 (70532300032)
+Shravan Khedkar — C237 (70532300040)
+Chetan Girase — C240 (70532300044)
+Under the Guidance of
+Prof. Sachin Sonawane
+Department of AIML
+MPSTME, SVKM's NMIMS Shirpur Campus
+2026-27
+Index
+Sr. No.
+Chapter
+Sections
+—
+Abstract
+1
+Introduction
+1.1 Problem statement · 1.2 Motivation
+2
+Objectives and scope
+2.1 Objectives · 2.2 Scope
+3
+Literature review and background
+3.1 Traditional traffic monitoring · 3.2 Deep-learning object detection · 3.3 Multi-object tracking · 3.4 ByteTrack
+4
+System requirements
+4.1 Hardware · 4.2 Software · 4.3 Input data
+5
+System architecture
+Pipeline diagram
+6
+Methodology
+6.1 Detection · 6.2 Tracking · 6.3 Centre point and trajectory · 6.4 Line-crossing count · 6.5 Speed estimation · 6.6 Density heatmap · 6.7 Per-frame logging
+7
+Implementation
+7.1 Configuration parameters · 7.2 Main processing loop · 7.3 Visual encoding · 7.4 Dashboard panels
+8
+Testing interface
+8.1 Test functions · 8.2 Gradio web app · 8.3 One-cell test · 8.4 Suggested test cases
+9
+Results and outputs
+9.1 Video run summary · 9.2 Tracked output video · 9.3 Density heatmap · 9.4 Analytics dashboard · 9.5 Image detection tests · 9.6 Observations
+10
+Applications
+11
+Limitations
+12
+Future scope
+13
+Conclusion
+—
+References
+List of figures
+Fig.
+Title
+Section
+1
+System architecture pipeline
+5
+2
+Frame from the tracked output video
+9.2
+3
+Traffic density heatmap
+9.3
+4
+Analytics dashboard
+9.4
+5
+Bus scene: input and detection output
+9.5
+6
+Bus scene object-count table
+9.5
+7
+Residential street detections
+9.5
+8
+Gradio object-count table
+9.5
+Abstract
+TrafficVision AI is a computer-vision system that turns an ordinary road video into traffic analytics, with no model training or data labelling. Each frame passes through a pretrained YOLOv8 detector, which finds people, bicycles, cars, motorcycles, buses and trucks. The ByteTrack algorithm then gives every object a persistent ID across frames.
+On top of these tracks the system draws motion trajectories, counts vehicles crossing a virtual line in two directions, estimates each vehicle's speed and builds a traffic-density heatmap. It finishes with an analytics dashboard, a summary report and a CSV of per-frame statistics.
+The project runs as a single Google Colab or Kaggle notebook on a T4 GPU (CPU also works, more slowly). A Gradio web app lets any examiner upload their own image or video and see the detection, tracking and counting results live.
+Keywords: object detection, multi-object tracking, YOLOv8, ByteTrack, traffic analytics, intelligent transportation systems, computer vision
+1. Introduction
+Cities need reliable traffic data to plan roads, time signals, manage congestion and protect pedestrians. Most of that data still comes from manual counts, inductive loops buried in the road or radar guns. These methods are costly to install, cover one spot each and record little beyond a raw count.
+CCTV cameras already watch most busy junctions. Modern deep learning can read their video directly: it can tell a bus from a motorcycle, follow each vehicle through the scene and measure how it moves. A software-only system on existing cameras is far cheaper than new roadside hardware.
+TrafficVision AI demonstrates this idea end to end. It combines a state-of-the-art detector (YOLOv8) with a state-of-the-art tracker (ByteTrack) and layers practical analytics on top.
+1.1 Problem statement
+Given a video of a road, the system must:
+Detect every vehicle and pedestrian in each frame and identify its class.
+Keep a consistent identity for each object as it moves, even through brief occlusions or missed detections.
+Turn those identities into traffic measures: directional counts, approximate speeds, spatial density and flow over time.
+Do all of this with pretrained models only, so it works on any new video without collecting or labelling a dataset.
+1.2 Motivation
+Manual traffic surveys are slow, error-prone and expensive to repeat.
+Detection alone counts the same car once per frame; without tracking, counts and speeds are meaningless.
+Existing commercial systems are closed and costly; this project uses open-source tools only.
+2. Objectives and scope
+2.1 Objectives
+Detect six road-user classes (person, bicycle, car, motorcycle, bus, truck) in real time with a pretrained YOLOv8 model.
+Assign and maintain a unique ID per object using ByteTrack multi-object tracking.
+Draw each object's recent trajectory on the video.
+Count vehicles crossing a virtual line, separately for the downward (IN) and upward (OUT) direction, per class.
+Estimate each vehicle's speed in km/h from its pixel displacement.
+Build a heatmap showing where traffic is densest.
+Produce an analytics dashboard, a text summary report and a per-frame CSV.
+Provide an interactive web interface so a user can test the system on any new image or video.
+2.2 Scope
+In scope: recorded road videos from a fixed camera; still images for detection only; the six COCO classes listed above; approximate speed from a single calibration constant.
+Out of scope: model training or fine-tuning; licence-plate reading; exact speed measurement (needs camera calibration); live RTSP streams; multi-camera tracking.
+3. Literature review and background
+3.1 Traditional traffic monitoring
+Early vision-based systems used background subtraction (e.g. Gaussian Mixture Models) to find moving blobs, then counted blobs crossing a line. They break down with shadows, lighting changes, camera shake and vehicles that overlap. They also cannot tell a bus from a car.
+3.2 Deep-learning object detection
+Detectors fall into two families:
+Two-stage detectors (R-CNN, Fast R-CNN, Faster R-CNN) first propose candidate regions, then classify each. They are accurate but slow.
+Single-stage detectors (SSD, YOLO) predict boxes and classes in one pass over the image, which makes them fast enough for video.
+YOLO ("You Only Look Once", Redmon et al., 2016) framed detection as a single regression problem. Later versions improved the backbone, neck and loss functions.
+YOLOv8 (Ultralytics, 2023) is the version used here. Its key traits:
+Anchor-free head: predicts object centres directly instead of adjusting preset anchor boxes, which simplifies training and generalises better.
+Decoupled head: separate branches for classification and box regression.
+CSP-based backbone with C2f modules for efficient feature extraction, plus a PAN-FPN neck that fuses features at several scales, so it finds both near and far vehicles.
+Sizes n / s / m / l / x trade speed for accuracy. This project uses YOLOv8s (small) by default.
+The weights are pretrained on MS-COCO, a dataset of about 118,000 training images across 80 classes, which already includes all the road users this project needs.
+3.3 Multi-object tracking (MOT)
+Most modern trackers follow tracking-by-detection: run a detector on each frame, then link detections across frames into tracks.
+SORT (Bewley et al., 2016) predicts each track's next position with a Kalman filter and matches predictions to detections by bounding-box overlap (IoU) using the Hungarian algorithm. It is fast but loses IDs during occlusion.
+DeepSORT (Wojke et al., 2017) adds an appearance (re-identification) feature from a second neural network. It keeps IDs better but runs slower.
+ByteTrack (Zhang et al., 2022) is the tracker used here.
+3.4 ByteTrack
+Earlier trackers threw away low-confidence detections. ByteTrack's insight is that many of these are real objects that are partly hidden or blurred. It associates every detection box in two rounds:
+High-confidence boxes are matched to existing tracks first, using IoU against Kalman-predicted positions.
+Tracks still unmatched are then matched to the low-confidence boxes. This recovers occluded vehicles instead of dropping them.
+Unmatched high-confidence boxes start new tracks; tracks unmatched for a set number of frames are removed. ByteTrack needs no appearance network, so it stays fast while matching or beating DeepSORT on MOT benchmarks. This makes it a good fit for crowded traffic scenes.
+4. System requirements
+4.1 Hardware
+Component
+Recommended
+Minimum
+Processor
+Any modern multi-core CPU
+Dual-core CPU
+GPU
+NVIDIA Tesla T4 (Colab / Kaggle free tier)
+None (CPU mode, slower)
+RAM
+12 GB+
+8 GB
+Storage
+~2 GB free (libraries, weights, outputs)
+1 GB
+4.2 Software
+Library / tool
+Role in the project
+Python 3
+Programming language
+Ultralytics
+YOLOv8 model loading, inference and built-in ByteTrack tracker
+PyTorch
+Deep-learning backend; GPU detection via torch.cuda
+OpenCV (cv2)
+Video reading/writing, drawing boxes, lines, text, heatmap colouring
+NumPy
+Array maths: centres, distances, heatmap accumulation
+Pandas
+Per-frame log, count tables, CSV export
+Matplotlib
+Heatmap display and the 4-panel dashboard
+FFmpeg
+Re-encoding output to H.264 so browsers can play it
+Gradio
+Interactive web app for testing on new inputs
+Google Colab / Kaggle
+Cloud notebook runtime with free GPU
+4.3 Input data
+No training dataset is needed. The notebook downloads a public traffic sample video automatically, trying three mirrors in order (a Roboflow vehicles.mp4 sample and two Intel IoT DevKit sample videos). It checks each download is larger than 100 KB and readable by OpenCV before using it. A street photo (bus.jpg from Ultralytics) is fetched as the sample test image. Users can substitute any traffic .mp4 by changing VIDEO_PATH.
+5. System architecture
+The system is a linear detect-then-track pipeline whose single product, the centre point of each tracked object, fans out into four analytics modules.
+TrafficVision AI pipeline · 4 stages, 4 analytics, 4 outputs
+Each frame flows left to right through the top row; the four analytics in the middle row update in parallel for every tracked object. After the last frame the results are written to four output files. The Gradio app (Section 8) wraps this same pipeline so new inputs can be tested without editing code.
+6. Methodology
+Every analytic in the system is derived from one quantity: the centre point of each tracked box, frame by frame.
+6.1 Detection
+Each frame goes to YOLOv8s with a confidence threshold of 0.35 and a class filter of COCO IDs {0, 1, 2, 3, 5, 7}. The model returns boxes as (x1, y1, x2, y2), a class ID and a confidence score. Classes 1, 2, 3, 5 and 7 are treated as vehicles; class 0 (person) is detected and tracked but excluded from counts and speeds.
+6.2 Tracking
+model.track(..., persist=True, tracker='bytetrack.yaml') runs ByteTrack on the detections. persist=True keeps the tracker's state between calls, so an object keeps the same ID from frame to frame. Each tracked box now carries a track ID.
+6.3 Centre point and trajectory
+For each box the centre is computed as:
+c_x = \frac{x_1 + x_2}{2}, \qquad c_y = \frac{y_1 + y_2}{2}
+Centres are stored per track ID in a fixed-length queue (deque(maxlen=40)), so each trajectory shows roughly the last 40 frames (about 1.5 s at 25 fps). The trajectory is drawn as a polyline in the object's class colour.
+6.4 Directional line-crossing count
+A horizontal virtual line is placed at 60% of the frame height: LINE_Y = 0.6 × H. For each vehicle the system remembers its centre-y in the previous frame. A crossing is recorded when the line lies between the old and new position:
+IN (moving down): previous y < LINE_Y ≤ current y
+OUT (moving up): previous y > LINE_Y ≥ current y
+Each track ID is added to a counted set the first time it crosses, so a vehicle is never counted twice. Counts are kept separately for each class.
+6.5 Speed estimation
+Speed uses the displacement between a track's centre now and 5 frames earlier. Pixels are converted to metres with a calibration constant (METERS_PER_PIXEL = 0.05), and frames to seconds with the video's FPS:
+v_{km/h} = \frac{\sqrt{(x_t - x_{t-5})^2 + (y_t - y_{t-5})^2} \times MPP \times FPS}{5} \times 3.6
+The factor 3.6 converts m/s to km/h. Averaging over 5 frames smooths out box jitter. Each vehicle's final speed is the median of its per-frame estimates (needing at least 3), which ignores outliers caused by a box suddenly resizing.
+6.6 Density heatmap
+A floating-point array the size of the frame starts at zero. Every frame, a filled circle of radius 18 px with value 1 is added at each object's centre. After processing, the array is blurred with a Gaussian (σ = 25), normalised to 0–255, coloured with the JET colour map and blended 50/50 over the first video frame. Red areas are where objects spent the most time: queues, slow lanes and junctions.
+6.7 Per-frame logging
+Each frame appends a row with the frame index, time in seconds (frame ÷ FPS), number of objects in frame and the cumulative crossing count. This log drives the dashboard and is exported as frame_stats.csv.
+7. Implementation
+The project is one Jupyter notebook organised into eleven sections, each a self-contained module.
+#
+Module
+What it does
+Output
+1
+Install & import
+Installs Ultralytics; imports OpenCV, NumPy, Pandas, Matplotlib, PyTorch; selects GPU (device 0) if CUDA is available, else CPU
+Device name printed
+2
+Input video
+Downloads a traffic video from the first working of three mirrors; validates size and readability; reads width, height, FPS and frame count
+traffic.mp4
+3
+Configuration
+Sets model, frame limit, confidence, class map, vehicle set, counting line, calibration and colours; loads YOLOv8s
+Loaded model
+4
+Pipeline
+Main loop: detect, track, update trajectories, speeds, counts and heatmap; draw overlays; log stats
+raw_output.mp4, in-memory stats
+5
+Video playback
+Re-encodes to H.264 with FFmpeg and embeds it inline as base64
+tracked_output.mp4
+6
+Heatmap
+Blurs, colours and overlays the density map on the first frame
+heatmap.jpg
+7
+Dashboard
+2 × 2 Matplotlib figure of class counts, objects over time, cumulative crossings, speed histogram
+dashboard.png
+8
+Summary report
+Prints totals and a per-class IN / OUT / TOTAL table; saves the frame log
+frame_stats.csv
+10A
+Gradio web app
+Image and video tabs for live testing with sliders
+Public share link
+10B
+One-cell test
+Runs the image or video function on any path or URL
+Inline results
+11
+Conclusion
+Summary of techniques and future scope
+—
+7.1 Key configuration parameters
+Parameter
+Value
+Meaning
+MODEL_NAME
+yolov8s.pt
+Small YOLOv8; yolov8n is faster, yolov8m more accurate
+MAX_FRAMES
+450
+About 15–20 s of video, keeps runtime short; None = full video
+CONF
+0.35
+Minimum detection confidence
+CLASSES
+{0, 1, 2, 3, 5, 7}
+person, bicycle, car, motorcycle, bus, truck
+VEHICLES
+{1, 2, 3, 5, 7}
+Classes used for counting and speed
+LINE_Y
+0.6 × frame height
+Position of the virtual counting line
+METERS_PER_PIXEL
+0.05
+Rough calibration for speed; adjust per camera
+Trajectory length
+40 points
+deque(maxlen=40) per track
+7.2 Main processing loop (Section 4)
+For every frame, until the video ends or MAX_FRAMES is reached:
+Read the frame with cv2.VideoCapture.
+Call model.track() with ByteTrack, the confidence threshold and the class filter.
+If any tracked boxes exist, pull out boxes, IDs and classes as NumPy arrays.
+For each object: compute the centre, record its class, append to its trajectory and add a circle to the heatmap.
+If the track has 6+ points, compute speed; store it if the object is a vehicle.
+Check for a line crossing against the stored previous y; update IN/OUT counts and the counted set.
+Draw the box, a filled label (#ID class speed km/h) and the trajectory polyline in the class colour.
+Draw the yellow counting line and a semi-transparent stats panel (live FPS, objects in frame, IN count, OUT count).
+Write the frame to the output video and append a row to the log.
+Progress is printed every 50 frames. At the end the script prints total frames, time taken and the number of unique objects tracked.
+7.3 Visual encoding
+Each class has a fixed BGR colour so a viewer can read the scene at a glance: person (orange), bicycle (yellow), car (green), motorcycle (magenta), bus (orange-red) and truck (red). The counting line is yellow and the stats panel is a 60%-opaque black box in the top-left corner.
+7.4 Dashboard panels (Section 7)
+Unique objects tracked by class — bar chart from the class of every track ID.
+Objects in frame over time — filled line chart from the per-frame log.
+Cumulative vehicles crossing the line — line chart showing traffic flow rate.
+Estimated vehicle speed distribution — histogram (15 bins) of median speeds per vehicle.
+8. Testing interface
+The system can be tested on any new input in two ways, so an examiner does not need to edit the pipeline code.
+8.1 Test functions
+analyze_image(img, conf) — input: an RGB image; output: the annotated image plus a table of detected objects with count and average confidence per class. It uses model.predict() (detection only, no tracking) and works on all 80 COCO classes.
+analyze_video(path, max_frames, conf) — input: a video file; output: the tracked video, a per-class table of unique objects and line crossings, and a one-line summary. It loads a fresh YOLO instance for every video, so tracker IDs from one test never leak into the next. Crossing detection uses a compact sign test: the vehicle crossed when (previous y − LINE_Y) × (current y − LINE_Y) < 0. This version counts crossings in either direction and includes people.
+8.2 Gradio web app (Section 10A)
+demo.launch(share=True) starts the app inline and creates a public link that opens on any device.
+Tab
+Input
+Controls
+Output
+Image → Detection
+Uploaded image
+Confidence slider (0.1–0.9, default 0.35)
+Annotated image, object-count table
+Video → Tracking + Counting
+Uploaded video
+Max frames (50–900, default 300); confidence slider
+Tracked video, counts by class, summary text
+Each tab includes a one-click example (test_image.jpg and the traffic video) so there is always something to try.
+8.3 One-cell test (Section 10B)
+Set TEST_INPUT to a file path or URL and run the cell. URLs are downloaded first. Image extensions (.jpg, .jpeg, .png, .bmp, .webp) show a side-by-side INPUT / OUTPUT figure and the count table; anything else is treated as a video and played inline with its report.
+8.4 Suggested test cases
+Test
+Input
+Expected result
+T1
+Street photo (test_image.jpg)
+Bus and people boxed with class and confidence
+T2
+Sample traffic video
+Stable IDs, trajectories, counts rising as cars cross the line
+T3
+Confidence 0.1 vs 0.9
+More false boxes at 0.1; missed small or far vehicles at 0.9
+T4
+Night or rainy video
+Lower confidence and some missed detections
+T5
+Image with no road users
+Table shows "nothing detected"
+T6
+Crowded junction
+Some ID switches during heavy occlusion
+9. Results and outputs
+On the 18-second sample motorway clip, the system tracked 27 unique vehicles, counted 9 line crossings and estimated speeds for 14 vehicles. Image tests found people, cars and a bus with 0.60–0.92 average confidence, with one misclassification.
+9.1 Video run summary
+Metric
+Value
+Frames analysed
+450 (18.0 s at 25 fps)
+Unique objects tracked
+27 (11 truck, 10 car, 6 bus)
+Peak objects in a single frame
+6
+Vehicles counted crossing the line
+9
+Vehicles with a speed estimate
+14
+Estimated speed range
+about 6–92 km/h (most between 6 and 28 km/h)
+Processing speed
+5.3 FPS (live overlay reading)
+The Section 8 summary report gives the crossings by class and direction. The average estimated speed across the 14 vehicles was 34.5 km/h (approx.).
+Class
+IN (down)
+OUT (up)
+Total
+Car
+4
+3
+7
+Truck
+2
+0
+2
+Total
+6
+3
+9
+9.2 Tracked output video
+Each vehicle carries a box labelled with its track ID, class and speed, and a line trailing its recent path. The yellow line is the counter. At this frame the panel reads 3 objects in frame, 4 counted IN and 2 counted OUT.
+9.3 Traffic density heatmap
+The heat follows the lanes exactly: three bands on the left (approaching) carriageway and one on the right. The hottest areas are in the middle distance, where vehicles appear smaller and move fewer pixels per frame, so they spend more frames in the same spot.
+9.4 Analytics dashboard
+Traffic arrived in bursts. Four vehicles crossed the line in the first 1.2 s, then crossings came singly at about 3, 9, 14, 16.5 and 18 s. Between roughly 10.5 and 15 s the road was nearly empty (0–2 objects in frame). Most speed estimates fall between 6 and 28 km/h, with a scattered tail up to about 92 km/h.
+9.5 Image detection tests
+Test
+Input
+Detected (average confidence)
+Result
+One-cell test (10B)
+test_image.jpg: street scene with a bus
+4 person (0.82), 1 bus (0.92)
+All people and the bus found, including a person cut off at the right edge
+Gradio app (10A)
+Residential street photo
+10 car (0.60), 2 person (0.70), 1 boat (0.59)
+Parked cars and pedestrians found; one SUV with a roof rack labelled "boat"
+The Gradio screenshot shows the slider at 0.85, yet it lists detections as low as 0.37. The table was therefore produced at a lower threshold (likely the 0.35 default) before the slider moved. Re-run at the threshold you want to show before submitting.
+9.6 Observations
+Detection: cars, trucks and buses are found reliably in daylight motorway footage. Distant vehicles near the gantry are picked up once they grow to a few dozen pixels.
+Unique count vs crossings: 27 tracks against 9 crossings is expected. Many vehicles enter or leave the frame without reaching the line within 18 s, and distant vehicles that flicker in and out of detection can be given a new ID.
+Class mix: 11 trucks outnumber 10 cars although the clip shows mostly cars. A track stores its last-seen class, and COCO models often label large SUVs and vans as truck. The line counts, taken at the moment of crossing, show the truer mix: 7 cars and 2 trucks. A majority vote over each track's classes would steady the unique-object count too.
+Counting: the cumulative curve rises one step at a time, confirming each vehicle is counted at most once.
+Speed: an average of 34.5 km/h and a spread of 6–92 km/h on a motorway, where real speeds are far higher and closer together, show the perspective error. Distant vehicles cross few pixels per frame, so one pixel-to-metre constant under-reads them. This is the strongest case for homography calibration.
+Misclassification: the "boat" box (0.59) shows the limit of pretrained COCO classes on unusual shapes. Raising the threshold to about 0.6 would drop it, at the cost of some true low-confidence cars.
+Performance: the overlay read 5.3 FPS, about 5 times slower than the 25 fps source, so this run was not real-time.
+10. Applications
+Smart-city traffic monitoring: automatic vehicle counts and class mix at junctions from existing CCTV.
+Signal timing: directional flow data to adjust green-light durations by time of day.
+Congestion detection: heatmaps and objects-in-frame trends reveal bottlenecks and queues.
+Toll plazas and parking: counting vehicles entering and leaving, by type.
+Pedestrian safety: tracking people near crossings and roads.
+Road planning surveys: replacing manual traffic counts with recorded video analysis.
+Fleet and logistics yards: monitoring truck movement in depots.
+11. Limitations
+Approximate speed: one constant (0.05 m/px) ignores perspective; speeds are only comparable within the same region of the frame.
+Horizontal counting line only: works best when traffic moves up or down the frame. Side-to-side traffic needs a vertical or angled line.
+Fixed camera assumed: camera movement breaks trajectories, speeds and the heatmap.
+Lighting and weather: night, rain, fog and glare lower detection confidence.
+Occlusion: long overlaps in dense traffic can cause ID switches, which may inflate unique-object counts.
+Pretrained COCO classes only: Indian road vehicles such as auto-rickshaws, e-rickshaws and tractors are not separate COCO classes and may be mislabelled or missed.
+Partial video by default: MAX_FRAMES = 450 processes only the first ~15–20 seconds unless changed.
+No quantitative accuracy evaluation: counts are not compared against hand-labelled ground truth in this version.
+12. Future scope
+Homography calibration: map four known road points to real-world metres to get accurate speeds across the whole frame.
+Licence-plate recognition (ANPR): add a plate detector plus OCR for over-speed and toll enforcement.
+Violation alerts: wrong-way driving, over-speeding, red-light jumping and illegal parking, raised automatically.
+Live input: process RTSP/CCTV streams in real time instead of recorded files.
+Custom fine-tuning: train on Indian traffic datasets (e.g. IDD) to recognise auto-rickshaws and other local vehicles.
+Polygon zones: count by lane or region, not only a single line.
+Accuracy evaluation: measure counting accuracy and MOTA / IDF1 against labelled ground truth.
+Edge deployment: export to ONNX / TensorRT for Jetson-class devices at the roadside.
+Live dashboard: stream counts to a web dashboard or database for city-wide monitoring.
+13. Conclusion
+TrafficVision AI shows that a full traffic-analytics pipeline can be built from pretrained, open-source models with no training data. YOLOv8 supplies accurate real-time detection; ByteTrack turns those detections into stable identities by also using low-confidence boxes. From these tracks the system derives directional counts, speed estimates, density heatmaps and time-series analytics.
+The Gradio interface makes the system easy to test on any new image or video. With camera calibration, local fine-tuning and live-stream input, the same design could serve as a low-cost smart-city traffic monitor built on cameras already installed.
+References
+J. Redmon, S. Divvala, R. Girshick, A. Farhadi, "You Only Look Once: Unified, Real-Time Object Detection," CVPR, 2016. arXiv:1506.02640
+G. Jocher, A. Chaurasia, J. Qiu, "Ultralytics YOLOv8," 2023. docs.ultralytics.com
+Y. Zhang et al., "ByteTrack: Multi-Object Tracking by Associating Every Detection Box," ECCV, 2022. arXiv:2110.06864
+A. Bewley, Z. Ge, L. Ott, F. Ramos, B. Upcroft, "Simple Online and Realtime Tracking," ICIP, 2016. arXiv:1602.00763
+N. Wojke, A. Bewley, D. Paulus, "Simple Online and Realtime Tracking with a Deep Association Metric," ICIP, 2017. arXiv:1703.07402
+T.-Y. Lin et al., "Microsoft COCO: Common Objects in Context," ECCV, 2014. arXiv:1405.0312
+S. Ren, K. He, R. Girshick, J. Sun, "Faster R-CNN: Towards Real-Time Object Detection with Region Proposal Networks," NeurIPS, 2015. arXiv:1506.01497
+R. E. Kalman, "A New Approach to Linear Filtering and Prediction Problems," Journal of Basic Engineering, 1960.
+OpenCV documentation. docs.opencv.org
+Gradio documentation. gradio.app/docs
